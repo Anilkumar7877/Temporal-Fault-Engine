@@ -206,3 +206,61 @@ async function runReaper() {
         setTimeout(runReaper, 2000); // Poll for dead containers every 2 seconds
     }
 }
+
+// --- MAIN ENGINE WORKER LOOP ---
+async function startEngineLoop() {
+    // Run an initial clock synchronization
+    await synchronizeCentralClock();
+    
+    // Periodically refresh the clock offset every 10 seconds in the background
+    setInterval(synchronizeCentralClock, 10000);
+    while (true) {
+        try {
+            const currentCentralTime = Date.now() + clockOffset;
+
+            // Try to pull an execution target using our atomic Lua script
+            const eventId = await redis.claimEvent(REDIS_SET_KEY, currentCentralTime);
+
+            if (eventId) {
+                // REMOVE THE 'await' HERE to process concurrently without blocking the loop!
+                processEvent(eventId).catch(err => 
+                    console.error(`[${WORKER_ID}] Async processing error:`, err.message)
+                );
+                continue; 
+            }
+
+            // No events due right now. Find out when the next closest event is.
+            const nextEvent = await redis.zrange(REDIS_SET_KEY, 0, 0, 'WITHSCORES');
+
+            if (nextEvent.length === 0) {
+                console.log(`[${WORKER_ID}] Queue empty. Entering deep sleep...`);
+                await sleepOrInterrupt(3600000); 
+            } else {
+                const nextEventTime = parseInt(nextEvent[1]);
+                const sleepDuration = nextEventTime - currentCentralTime;
+
+                if (sleepDuration > 0) {
+                    console.log(`[${WORKER_ID}] Next event in ${sleepDuration}ms. Sleeping...`);
+                    const status = await sleepOrInterrupt(sleepDuration);
+                    if (status.interrupted) {
+                        console.log(`[${WORKER_ID}] Sleep interrupted by incoming high-priority event. Re-evaluating...`);
+                    }
+                }
+            }
+        } catch (error) {
+            console.error(`[${WORKER_ID} LOOP] Fatal processing step context error:`, error.message);
+            await new Promise(res => setTimeout(res, 1000)); 
+        }
+    }
+}
+
+// --- INITIALIZE EXECUTION LAYER ---
+(async () => {
+    await initializeConnections();
+    
+    // Fire up the safety lease checker engine
+    runReaper();
+    
+    // Execute core loop engine
+    startEngineLoop();
+})();

@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Temporal Fault Engine Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen p-8">
+    <div class="max-w-7xl x-auto grid grid-cols-1 lg:grid-cols-3 gap-8">
+        
+        <div class="bg-gray-800 p-6 rounded-lg shadow-xl border border-gray-700 h-fit">
+            <h2 class="text-xl font-bold mb-4 text-indigo-400 border-b border-gray-700 pb-2">Producer Control Panel</h2>
+            <form id="scheduleForm" class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium mb-1">Payload JSON</label>
+                    <textarea id="payload" class="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm font-mono focus:outline-none focus:border-indigo-500" rows="4">{"task": "send_alert", "user_id": "usr_99X"}</textarea>
+                </div>
+                <div>
+                    <label class="block text-sm font-medium mb-1">Execution Delay (ms)</label>
+                    <input type="number" id="delayMs" value="3000" class="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm focus:outline-none focus:border-indigo-500">
+                </div>
+                <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 font-medium py-2 rounded transition">
+                    Schedule Event
+                </button>
+            </form>
+            <div id="statusAlert" class="mt-4 text-xs font-mono p-2 rounded hidden bg-gray-950 text-emerald-400 border border-emerald-900"></div>
+        </div>
+
+        <div class="bg-gray-800 p-6 rounded-lg shadow-xl border border-gray-700 lg:col-span-2">
+            <div class="flex justify-between items-center mb-4 border-b border-gray-700 pb-2">
+                <h2 class="text-xl font-bold text-emerald-400">Consumer Execution Stream</h2>
+                <span id="wsStatus" class="text-xs px-2 py-1 rounded bg-red-900/50 text-red-400 border border-red-700">Disconnected</span>
+            </div>
+            
+            <div class="overflow-x-auto">
+                <table class="w-full text-left border-collapse">
+                    <thead>
+                        <tr class="border-b border-gray-700 text-xs text-gray-400 uppercase tracking-wider">
+                            <th class="pb-3 pl-2">Event ID</th>
+                            <th class="pb-3">Payload</th>
+                            <th class="pb-3">Target / Actual Time</th>
+                            <th class="pb-3 text-right pr-4">Variance</th>
+                            <th class="pb-3">Node</th>
+                        </tr>
+                    </thead>
+                    <tbody id="telemetryStream" class="text-xs font-mono divide-y divide-gray-700/50">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const form = document.getElementById('scheduleForm');
+        const statusAlert = document.getElementById('statusAlert');
+        const wsStatus = document.getElementById('wsStatus');
+        const telemetryStream = document.getElementById('telemetryStream');
+
+        // Connect to API port
+        const API_URL = window.location.origin;
+        const WS_URL = `ws://${window.location.host}`;
+
+        // --- HTTP Producer Logic ---
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            statusAlert.classList.add('hidden');
+            
+            try {
+                const response = await fetch(`${API_URL}/schedule`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        payload: JSON.parse(document.getElementById('payload').value),
+                        delayMs: parseInt(document.getElementById('delayMs').value)
+                    })
+                });
+                const data = await response.json();
+                statusAlert.innerText = `[Pending] Event Registered:\n${data.id}`;
+                statusAlert.classList.remove('hidden');
+            } catch (err) {
+                alert('Scheduling call failed: ' + err.message);
+            }
+        });
+
+        // --- Real-time WebSockets Push Logic ---
+        function connectWS() {
+            const ws = new WebSocket(WS_URL);
+
+            ws.onopen = () => {
+                wsStatus.innerText = 'Live Feed Active';
+                wsStatus.className = 'text-xs px-2 py-1 rounded bg-emerald-900/50 text-emerald-400 border border-emerald-700';
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                
+                // Color code the variance boundary metrics dynamically
+                const varianceAbs = Math.abs(data.variance);
+                const varianceColor = varianceAbs <= 200 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold';
+
+                const row = document.createElement('tr');
+                row.className = 'hover:bg-gray-700/30 transition border-b border-gray-800';
+                row.innerHTML = `
+                    <td class="py-3 pl-2 text-gray-400 text-[10px]">${data.id.substring(0,8)}...</td>
+                    <td class="py-3 text-gray-300 max-w-[150px] truncate">${JSON.stringify(data.payload)}</td>
+                    <td class="py-3 text-gray-400">
+                        <div class="text-gray-500">T: ${new Date(data.scheduled_at).toLocaleTimeString()}</div>
+                        <div>A: ${new Date(data.executed_at).toLocaleTimeString()}</div>
+                    </td>
+                    <td class="py-3 text-right pr-4 ${varianceColor}">${data.variance}ms</td>
+                    <td class="py-3 text-indigo-300 text-[10px]">${data.worker_id.substring(0,15)}</td>
+                `;
+                telemetryStream.prepend(row);
+            };
+
+            ws.onclose = () => {
+                wsStatus.innerText = 'Disconnected';
+                wsStatus.className = 'text-xs px-2 py-1 rounded bg-red-900/50 text-red-400 border border-red-700';
+                setTimeout(connectWS, 2000); // Reconnect loop
+            };
+        }
+        connectWS();
+    </script>
+</body>
+</html>

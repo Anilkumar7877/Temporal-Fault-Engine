@@ -1,0 +1,11 @@
+{
+  "name": "temporal-fault-engine-api",
+  "version": "1.0.0",
+  "main": "server.js",
+  "dependencies": {
+    "express": "^4.19.2",
+    "ioredis": "^5.4.1",
+    "pg": "^8.11.3",
+    "ws": "^8.16.0"
+  }
+}

@@ -324,6 +324,14 @@ If 10,000 events hit at the exact same second, an unthrottled system will crash 
 
 **Scale Victory:** With 5 workers running concurrently, the cluster caps its active memory load at 250 tasks at any single microsecond. It cleanly liquefies a massive 10,000-event shockwave in exactly 4.0 seconds flat with flat memory usage and a completely healthy database pool.
 
+## Engine Observability & Scraping Interface
+
+The Ingress API Gateway exposes a native, zero-dependency `GET /metrics` telemetry endpoint matching the standard **Prometheus Text Exposition Format (v0.0.4)**.
+
+### Architectural Advantages
+* **Stateless Consistency:** Because individual workers log their true execution timestamps directly inside the transactional database core, the API computes global cluster metrics dynamically on scrape request. Worker node restarts or scaling operations will never corrupt metrics state.
+* **Histogram Aggregation Accuracy:** Instead of approximating percentiles locally on isolated nodes, the database evaluates true cumulative histogram buckets using standard mathematical conditions (`le="5"`, `le="15"`, etc.), allowing unified Grafana tracking without metric drift.
+
 ---
 
 # Local Deployment

@@ -110,6 +110,60 @@ app.post('/schedule', async (req, res) => {
     }
 });
 
+// GET /metrics - Prometheus Observability Endpoint
+app.get('/metrics', async (req, res) => {
+    try {
+        const query = `
+            SELECT 
+                COUNT(*) as scheduled,
+                COUNT(*) FILTER (WHERE status = 'executed') as executed,
+                COUNT(*) FILTER (WHERE status = 'failed') as failed,
+                COALESCE(SUM(EXTRACT(EPOCH FROM (executed_at - scheduled_at)) * 1000) FILTER (WHERE status = 'executed'), 0) as variance_sum,
+                COUNT(*) FILTER (WHERE status = 'executed' AND EXTRACT(EPOCH FROM (executed_at - scheduled_at)) * 1000 <= 5) as b_5,
+                COUNT(*) FILTER (WHERE status = 'executed' AND EXTRACT(EPOCH FROM (executed_at - scheduled_at)) * 1000 <= 15) as b_15,
+                COUNT(*) FILTER (WHERE status = 'executed' AND EXTRACT(EPOCH FROM (executed_at - scheduled_at)) * 1000 <= 50) as b_50,
+                COUNT(*) FILTER (WHERE status = 'executed' AND EXTRACT(EPOCH FROM (executed_at - scheduled_at)) * 1000 <= 200) as b_200
+            FROM events;
+        `;
+        
+        const dbRes = await pgClient.query(query);
+        const m = dbRes.rows[0];
+
+        // Format metrics explicitly into standard Prometheus exposition format
+        const responseText = [
+            `# HELP scheduler_events_scheduled_total Total events submitted to the system.`,
+            `# TYPE scheduler_events_scheduled_total counter`,
+            `scheduler_events_scheduled_total ${m.scheduled}`,
+            ``,
+            `# HELP scheduler_events_executed_total Total events successfully executed by workers.`,
+            `# TYPE scheduler_events_executed_total counter`,
+            `scheduler_events_executed_total ${m.executed}`,
+            ``,
+            `# HELP scheduler_events_failed_total Total events that permanently failed execution boundaries.`,
+            `# TYPE scheduler_events_failed_total counter`,
+            `scheduler_events_failed_total ${m.failed}`,
+            ``,
+            `# HELP scheduler_execution_variance_milliseconds Histogram tracking execution accuracy lag.`,
+            `# TYPE scheduler_execution_variance_milliseconds histogram`,
+            `scheduler_execution_variance_milliseconds_bucket{le="5"} ${m.b_5}`,
+            `scheduler_execution_variance_milliseconds_bucket{le="15"} ${m.b_15}`,
+            `scheduler_execution_variance_milliseconds_bucket{le="50"} ${m.b_50}`,
+            `scheduler_execution_variance_milliseconds_bucket{le="200"} ${m.b_200}`,
+            `scheduler_execution_variance_milliseconds_bucket{le="+Inf"} ${m.executed}`,
+            `scheduler_execution_variance_milliseconds_sum ${parseFloat(m.variance_sum).toFixed(2)}`,
+            `scheduler_execution_variance_milliseconds_count ${m.executed}`
+        ].join('\n');
+
+        // Set mandatory Prometheus text content headers
+        res.set('Content-Type', 'text/plain; version=0.0.4; charset=utf-8');
+        res.status(200).send(responseText);
+
+    } catch (err) {
+        console.error('Metrics aggregation failure:', err.message);
+        res.status(500).send('# ERROR: Failed to gather engine cluster telemetry metrics');
+    }
+});
+
 // Start HTTP Server
 const server = app.listen(PORT, () => {
     console.log(`Ingress HTTP Server running on port ${PORT}`);

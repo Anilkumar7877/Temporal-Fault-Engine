@@ -1,0 +1,9 @@
+{
+  "name": "temporal-fault-engine-worker",
+  "version": "1.0.0",
+  "main": "worker.js",
+  "dependencies": {
+    "ioredis": "^5.4.1",
+    "pg": "^8.11.3"
+  }
+}

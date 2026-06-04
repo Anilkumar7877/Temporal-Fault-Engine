@@ -72,3 +72,46 @@ async function initializeConnections() {
         }
     }
 }
+
+// --- 2. DEFEAT CLOCK SKEW: Use Central Database Time as Source of Truth ---
+// async function getCentralTimeMs() {
+//     const res = await pgClient.query("SELECT EXTRACT(EPOCH FROM NOW()) * 1000 AS ts;");
+//     return Math.floor(parseFloat(res.rows[0].ts));
+// }
+// --- OPTIMIZED CLOCK SYNC ---
+// Calculates the drift delta relative to the central DB clock
+async function synchronizeCentralClock() {
+    try {
+        const start = Date.now();
+        const res = await pgClient.query("SELECT EXTRACT(EPOCH FROM NOW()) * 1000 AS ts;");
+        const lat = (Date.now() - start) / 2; // Account for network roundtrip latency
+        const dbTime = Math.floor(parseFloat(res.rows[0].ts)) + lat;
+        
+        clockOffset = dbTime - Date.now();
+    } catch (err) {
+        console.error(`[${WORKER_ID}] Clock sync failure:`, err.message);
+    }
+}
+// --- 3. DEFEAT POLLING TRAP: Dynamic Sleep with Pub/Sub Interrupts ---
+function sleepOrInterrupt(ms) {
+    if (ms <= 0) return Promise.resolve({ interrupted: false });
+    
+    return new Promise((resolve) => {
+        let timeoutToken;
+
+        const messageHandler = (channel) => {
+            if (channel === INTERRUPT_CHANNEL) {
+                clearTimeout(timeoutToken);
+                redisSub.off('message', messageHandler);
+                resolve({ interrupted: true });
+            }
+        };
+
+        timeoutToken = setTimeout(() => {
+            redisSub.off('message', messageHandler);
+            resolve({ interrupted: false });
+        }, ms);
+
+        redisSub.on('message', messageHandler);
+    });
+}

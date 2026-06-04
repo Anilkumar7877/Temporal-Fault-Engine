@@ -48,7 +48,7 @@ async function initStore() {
         await pgClient.connect();
         
         redisPub = new Redis(redisUrl);
-        redisSub = new Redis(redisUrl);
+        redisSub = new Redis(redisUrl, { enableReadyCheck: false });
         
         // Initial clock calculation + establish a 10-second background heartbeat refresh
         await synchronizeCentralClock();

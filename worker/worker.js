@@ -3,7 +3,11 @@ const Redis = require('ioredis');
 const crypto = require('crypto');
 const dotenv = require('dotenv');
 
-dotenv.config();
+// 1. GLOBAL ENGINE CONFIGURATIONS (Must be defined before any functions run)
+const WORKER_ID = process.env.HOSTNAME || `worker-${crypto.randomUUID().substring(0, 8)}`;
+const LEASE_DURATION_SEC = 5;
+const REDIS_SET_KEY = 'scheduled_events';
+const INTERRUPT_CHANNEL = 'event_interrupt';
 
 // Database and Redis Configuration derived purely from environment variables
 const dbConfig = {

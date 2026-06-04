@@ -115,3 +115,94 @@ function sleepOrInterrupt(ms) {
         redisSub.on('message', messageHandler);
     });
 }
+
+// --- 4. EXACTLY-ONCE EXECUTION: Processing Logic ---
+async function processEvent(eventId) {
+    try {
+        // Step A: Attempt to claim lease in Postgres
+        const claimQuery = `
+            UPDATE events 
+            SET status = 'claimed', 
+                worker_id = $1, 
+                claimed_at = NOW(), 
+                leased_until = NOW() + cast($2 || ' second' as INTERVAL)
+            WHERE id = $3 AND status = 'pending'
+            RETURNING *;
+        `;
+        const res = await pgClient.query(claimQuery, [WORKER_ID, LEASE_DURATION_SEC, eventId]);
+
+        if (res.rowCount === 0) {
+            // Concurrency fallback: Another node processed or modified it
+            return;
+        }
+
+        const event = res.rows[0];
+        console.log(`[${WORKER_ID}] Claimed Event ${event.id}. Executing payload...`);
+        
+        // Step B: Mark as executed
+        const completeQuery = `
+            UPDATE events 
+            SET status = 'executed', executed_at = NOW() 
+            WHERE id = $1 
+            RETURNING *;
+        `;
+        const finalRes = await pgClient.query(completeQuery, [eventId]);
+        const executedEvent = finalRes.rows[0];
+
+        // --- SIMULATE PAYLOAD EXECUTION ---
+        // Replace this block with your actual execution task logic
+        await new Promise(resolve => setTimeout(resolve, 100)); 
+        // ----------------------------------
+
+        // Calculate precision telemetry
+        const scheduledTime = new Date(executedEvent.scheduled_at).getTime();
+        const executedTime = new Date(executedEvent.executed_at).getTime();
+        const variance = executedTime - scheduledTime;
+
+        console.log(`[${WORKER_ID}] Executed Event ${eventId} with variance: ${variance}ms`);
+
+        // Step C: DEFEAT NOTIFICATION-BEFORE-COMMIT: Notify Dashboard *AFTER* database commit
+        const dashboardPayload = {
+            id: executedEvent.id,
+            payload: executedEvent.payload,
+            scheduled_at: scheduledTime,
+            executed_at: executedTime,
+            variance: variance,
+            worker_id: WORKER_ID
+        };
+        await redis.publish('dashboard_execution_stream', JSON.stringify(dashboardPayload));
+
+    } catch (error) {
+        console.error(`[${WORKER_ID}] Error processing event ${eventId}:`, error);
+        // Fallback status reset on explicit error
+        await pgClient.query("UPDATE events SET status = 'pending' WHERE id = $1 AND status = 'claimed'", [eventId]);
+        const score = Date.now() + clockOffset;
+        await redis.zadd(REDIS_SET_KEY, score, eventId);
+    }
+}
+
+// --- 5. DEFEAT KILL -9 TRAP: The Fault Recovery Lease Reaper ---
+async function runReaper() {
+    try {
+        // Find events stuck in 'claimed' state whose lease has run out
+        const deadLeasesQuery = `
+            UPDATE events 
+            SET status = 'pending', worker_id = NULL, claimed_at = NULL, leased_until = NULL
+            WHERE status = 'claimed' AND leased_until < NOW()
+            RETURNING id, EXTRACT(EPOCH FROM scheduled_at) * 1000 as score;
+        `;
+        const res = await pgClient.query(deadLeasesQuery);
+
+        for (const row of res.rows) {
+            console.warn(`[${WORKER_ID} REAPER] Detected crashed worker lease for Event ${row.id}. Re-indexing.`);
+            // Push back into the Redis scheduling engine instantly
+            await redis.zadd(REDIS_SET_KEY, Math.floor(row.score), row.id);
+            // Alert other workers to re-evaluate loops
+            await redis.publish(INTERRUPT_CHANNEL, 'requeue');
+        }
+    } catch (error) {
+        console.error(`[${WORKER_ID} REAPER] Execution error:`, error.message);
+    } finally {
+        setTimeout(runReaper, 2000); // Poll for dead containers every 2 seconds
+    }
+}

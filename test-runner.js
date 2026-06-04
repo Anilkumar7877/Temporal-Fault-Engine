@@ -1,8 +1,12 @@
 const { Client } = require('pg');
 
 const API_URL = 'http://127.0.0.1:3000/schedule';
-const TOTAL_EVENTS = 60; // Safely above the required 50 events limit
-const TEST_DELAY_MS = 4000; // Schedule all events to fire in 4 seconds
+// const TOTAL_EVENTS = 60; // Safely above the required 50 events limit
+// const TEST_DELAY_MS = 4000; // Schedule all events to fire in 4 seconds
+
+// --- UPDATE THESE VALUES INSIDE YOUR LOCAL test-runner.js ---
+const TOTAL_EVENTS = 100;    // Scaled to meet the 100 concurrent schedules requirement
+const TEST_DELAY_MS = 5000;   // Targets an execution target epoch 5 seconds out
 
 const dbConfig = {
     host: '127.0.0.1',

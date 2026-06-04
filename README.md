@@ -286,6 +286,7 @@ By combining PostgreSQL-based time calibration with periodic offset correction, 
 
 # Performance Characteristics
 
+## TEST FOR 60 CONCURRENT EVENTS..
 * 🚀 Starting Automated Benchmark: Firing 60 concurrent events...
 * ✅ All 60 events accepted by Ingress. Waiting for execution window...
 * 📊 Gathering exact execution metrics from PostgreSQL Source of Truth...
@@ -300,6 +301,19 @@ By combining PostgreSQL-based time calibration with periodic offset correction, 
 
 All observed execution variance remains significantly below the 200 ms target threshold.
 
+## TEST FOR 100 CONCURRENT EVENTS..
+                            
+🚀 Starting Automated Benchmark: Firing 100 concurrent events...
+✅ All 100 events accepted by Ingress. Waiting for execution window...
+📊 Gathering exact execution metrics from PostgreSQL Source of Truth...
+
+### Timing Distribution Table (n=100)
+| Metric | Variance (ms) | Target Constraint | Status |
+| :--- | :--- | :--- | :--- |
+| **p50 (Median)** | `47.0ms` | Bounded Latency | ✨ Pass |
+| **p95** | `103.0ms` | Bounded Latency | ✨ Pass |
+| **p99** | `108.0ms` | `< 200ms`        | ✅ Pass |
+| **Max Burst** | `112.0ms` | Real-run Peak | Checked |
 ---
 
 # Local Deployment

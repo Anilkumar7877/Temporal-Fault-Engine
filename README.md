@@ -239,6 +239,51 @@ No startup migration or manual cleanup step is required.
 
 ---
 
+# Distributed Clock Skew Mitigation Protocol
+
+In a distributed environment, individual servers and containers naturally experience clock drift. If workers evaluate event deadlines using their local system time, events may execute too early or too late.
+
+To eliminate this issue, the scheduler uses **PostgreSQL as the authoritative time source** and maintains a lightweight in-memory clock offset on every node.
+
+## Dynamic Clock Synchronization
+
+During startup, each API instance and worker performs a calibration query:
+
+```sql
+SELECT EXTRACT(EPOCH FROM NOW()) * 1000 AS ts;
+```
+
+To compensate for network latency, the scheduler measures the query round-trip time (RTT) and estimates the actual database time:
+
+[
+\text{dbTime} = \text{dbTimestamp} + \frac{\text{RTT}}{2}
+]
+
+Each node then computes its local clock offset:
+
+[
+\text{clockOffset} = \text{dbTime} - \text{Date.now()}
+]
+
+This allows centralized time to be generated entirely in memory:
+
+```javascript
+const currentCentralTime = Date.now() + clockOffset;
+```
+
+A background synchronization task refreshes the offset every 10 seconds to prevent long-term drift.
+
+## Consistency Guarantees
+
+* All event timestamps are created using the centralized database clock.
+* Redis Sorted Set scores are generated from the same timeline.
+* Workers evaluate deadlines using a synchronized clock rather than local machine time.
+* Time zone differences and hardware clock drift cannot affect scheduling accuracy.
+
+By combining PostgreSQL-based time calibration with periodic offset correction, the scheduler maintains a consistent cluster-wide notion of time without requiring continuous database queries.
+
+---
+
 # Performance Characteristics
 
 * 🚀 Starting Automated Benchmark: Firing 60 concurrent events...

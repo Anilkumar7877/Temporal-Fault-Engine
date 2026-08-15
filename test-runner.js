@@ -19,6 +19,7 @@ const dbConfig = {
 async function runRealTest() {
     console.log(`🚀 Starting Automated Benchmark: Firing ${TOTAL_EVENTS} concurrent events...`);
     const requests = [];
+    const scheduledIds = [];
 
     // 1. Bombard the API Gateway concurrently
     for (let i = 1; i <= TOTAL_EVENTS; i++) {
@@ -33,12 +34,16 @@ async function runRealTest() {
             }).then(res => {
                 if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
                 return res.json();
+            }).then(data => {
+                if (data && data.id) {
+                    scheduledIds.push(data.id);
+                }
             }).catch(err => console.error(`❌ Request failed: ${err.message}`))
         );
     }
 
     await Promise.all(requests);
-    console.log(`✅ All ${TOTAL_EVENTS} events accepted by Ingress. Waiting for execution window...`);
+    console.log(`✅ All ${scheduledIds.length}/${TOTAL_EVENTS} events accepted by Ingress. Waiting for execution window...`);
 
     // 2. Wait for the workers to execute the burst (Delay + 3 seconds padding)
     const waitTime = TEST_DELAY_MS + 3000;
@@ -56,15 +61,15 @@ async function runRealTest() {
                 id,
                 EXTRACT(EPOCH FROM (executed_at - scheduled_at)) * 1000 AS variance_ms
             FROM events 
-            WHERE status = 'executed'
+            WHERE status = 'executed' AND id = ANY($1)
             ORDER BY variance_ms ASC;
         `;
         
-        const res = await pgClient.query(query);
+        const res = await pgClient.query(query, [scheduledIds]);
         const datasets = res.rows.map(row => Math.abs(parseFloat(row.variance_ms)));
 
-        if (datasets.length < 50) {
-            console.error(`❌ Error: Only found ${datasets.length} executed events. Run docker-compose up again and retry.`);
+        if (datasets.length === 0) {
+            console.error(`❌ Error: No executed events found for this run.`);
             return;
         }
 
@@ -80,9 +85,6 @@ async function runRealTest() {
         const maxVariance = datasets[datasets.length - 1].toFixed(1);
 
         // 5. Generate markdown text automatically
-        console.log('\n============================================================');
-        console.log('📝 COPY AND PASTE THIS DIRECTLY INTO YOUR README.MD');
-        console.log('============================================================\n');
         console.log(`### Timing Distribution Table (n=${datasets.length})`);
         console.log(`| Metric | Variance (ms) | Target Constraint | Status |`);
         console.log(`| :--- | :--- | :--- | :--- |`);

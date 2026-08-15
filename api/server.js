@@ -110,6 +110,25 @@ app.post('/schedule', async (req, res) => {
     }
 });
 
+// --- HTTP ENDPOINT: CLEAR ALL EVENTS ---
+app.post('/clear', async (req, res) => {
+    try {
+        // 1. Truncate PostgreSQL events table
+        await pgClient.query("TRUNCATE TABLE events RESTART IDENTITY;");
+
+        // 2. Clear Redis Sorted Set
+        await redisPub.del(REDIS_SET_KEY);
+
+        // 3. Alert workers to instantly re-evaluate loop dynamic sleep timers
+        await redisPub.publish(INTERRUPT_CHANNEL, 'clear');
+
+        return res.status(200).json({ message: 'All events successfully cleared from PostgreSQL and Redis' });
+    } catch (error) {
+        console.error('Clear events error:', error);
+        return res.status(500).json({ error: 'Internal server failure clearing events' });
+    }
+});
+
 // GET /metrics - Prometheus Observability Endpoint
 app.get('/metrics', async (req, res) => {
     try {

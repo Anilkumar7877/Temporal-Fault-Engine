@@ -23,6 +23,9 @@
                 <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 font-medium py-2 rounded transition">
                     Schedule Event
                 </button>
+                <button type="button" id="clearBtn" class="w-full bg-rose-600 hover:bg-rose-500 font-medium py-2 rounded transition mt-2">
+                    Clear All Events
+                </button>
             </form>
             <div id="statusAlert" class="mt-4 text-xs font-mono p-2 rounded hidden bg-gray-950 text-emerald-400 border border-emerald-900"></div>
         </div>
@@ -37,7 +40,8 @@
                 <table class="w-full text-left border-collapse">
                     <thead>
                         <tr class="border-b border-gray-700 text-xs text-gray-400 uppercase tracking-wider">
-                            <th class="pb-3 pl-2">Event ID</th>
+                            <th class="pb-3 pl-2 w-12">#</th>
+                            <th class="pb-3">Event ID</th>
                             <th class="pb-3">Payload</th>
                             <th class="pb-3">Target / Actual Time</th>
                             <th class="pb-3 text-right pr-4">Variance</th>
@@ -57,6 +61,7 @@
         const statusAlert = document.getElementById('statusAlert');
         const wsStatus = document.getElementById('wsStatus');
         const telemetryStream = document.getElementById('telemetryStream');
+        let eventCount = 0;
 
         // Connect to API port
         const API_URL = window.location.origin;
@@ -84,6 +89,30 @@
             }
         });
 
+        // --- HTTP Clear Events Logic ---
+        const clearBtn = document.getElementById('clearBtn');
+        clearBtn.addEventListener('click', async () => {
+            if (!confirm('Are you sure you want to clear all events?')) return;
+            statusAlert.classList.add('hidden');
+            
+            try {
+                const response = await fetch(`${API_URL}/clear`, {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    telemetryStream.innerHTML = '';
+                    eventCount = 0;
+                    statusAlert.innerText = `[Cleared] ${data.message}`;
+                    statusAlert.classList.remove('hidden');
+                } else {
+                    alert('Failed to clear events: ' + data.error);
+                }
+            } catch (err) {
+                alert('Clear call failed: ' + err.message);
+            }
+        });
+
         // --- Real-time WebSockets Push Logic ---
         function connectWS() {
             const ws = new WebSocket(WS_URL);
@@ -95,6 +124,7 @@
 
             ws.onmessage = (event) => {
                 const data = JSON.parse(event.data);
+                eventCount++;
                 
                 // Color code the variance boundary metrics dynamically
                 const varianceAbs = Math.abs(data.variance);
@@ -103,7 +133,8 @@
                 const row = document.createElement('tr');
                 row.className = 'hover:bg-gray-700/30 transition border-b border-gray-800';
                 row.innerHTML = `
-                    <td class="py-3 pl-2 text-gray-400 text-[10px]">${data.id.substring(0,8)}...</td>
+                    <td class="py-3 pl-2 text-indigo-400 font-bold">${eventCount}</td>
+                    <td class="py-3 text-gray-400 text-[10px]">${data.id.substring(0,8)}...</td>
                     <td class="py-3 text-gray-300 max-w-[150px] truncate">${JSON.stringify(data.payload)}</td>
                     <td class="py-3 text-gray-400">
                         <div class="text-gray-500">T: ${new Date(data.scheduled_at).toLocaleTimeString()}</div>
